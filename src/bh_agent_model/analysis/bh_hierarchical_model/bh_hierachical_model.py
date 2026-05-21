@@ -1,13 +1,14 @@
+from typing import Sequence
+
+import arviz as az
 import numpy as np
+import pandas as pd
 import pymc as pm
 import pytensor
 import pytensor.tensor as pt
-import arviz as az
-import pandas as pd
 import xarray as xr
-
-from typing import Sequence
 from arviz import InferenceData
+
 
 class BHHierarchicalModel:
     """
@@ -27,14 +28,13 @@ class BHHierarchicalModel:
     :param risk_aversion: Risk aversion coefficient.
     """
 
-
     def __init__(
         self,
         observed_prices: Sequence[float],
-        n_traders: int=4,
-        r: float=1.01,
-        sigma2: float=0.25,
-        risk_aversion: float=1.0,
+        n_traders: int = 4,
+        r: float = 1.01,
+        sigma2: float = 0.25,
+        risk_aversion: float = 1.0,
     ) -> None:
         """
         Initialize the Bayesian hierachical Brock-Hommes model.
@@ -70,10 +70,8 @@ class BHHierarchicalModel:
 
         :returns: Constructed PyMC model.
         """
-
         # create pymc probabilistic model context
         with pm.Model() as model:
-
             # =====================================================
             # HYPERPRIORS
             # =====================================================
@@ -95,10 +93,12 @@ class BHHierarchicalModel:
             # =====================================================
 
             # trader-specific trend parameters
-            g = pm.Normal(
+            g = pm.TruncatedNormal(
                 name="g",
                 mu=mu_g,
                 sigma=sigma_g,
+                lower=-1.0,
+                upper=1.0,
                 shape=self.n_traders,
             )
 
@@ -139,16 +139,11 @@ class BHHierarchicalModel:
                 :param risk_aversion: Risk aversion coefficient.
                 :returns: updated latent price state.
                 """
-
                 # traders from forecasts based on linear prediction rule
                 forecasts = g * x_prev + b
 
                 # compute trader demands using mean-variance framework
-                demands = (
-                    forecasts - r * x_prev
-                ) / (
-                    risk_aversion * sigma2
-                )
+                demands = (forecasts - r * x_prev) / (risk_aversion * sigma2)
 
                 # clip extreme demands for numerical stability
                 demands = pt.clip(
@@ -167,18 +162,15 @@ class BHHierarchicalModel:
             # =====================================================
 
             # recursively generate latent states over time
-            outputs, _ = pytensor.scan(
-                fn=transition,
-                outputs_info=[x0],
-                non_sequences=[g, b, self.r, self.sigma2, self.risk_aversion],
-                n_steps=self.T - 1
-            )
+            outputs, _ = pytensor.scan(fn=transition, outputs_info=[x0], non_sequences=[g, b, self.r, self.sigma2, self.risk_aversion], n_steps=self.T - 1)
 
             # concentrate initial state with generated outputs
-            x_latent = pt.concatenate([
-                [x0],
-                outputs,
-            ])
+            x_latent = pt.concatenate(
+                [
+                    [x0],
+                    outputs,
+                ]
+            )
 
             # =====================================================
             # OBSERVATION MODEL
@@ -198,7 +190,7 @@ class BHHierarchicalModel:
 
         return model
 
-    def fit(self, draws: int=2000, tune:int=2000) -> InferenceData:
+    def fit(self, draws: int = 2000, tune: int = 2000) -> InferenceData:
         """
         Fit the Bayesian model using MCMC sampling.
 
@@ -206,10 +198,8 @@ class BHHierarchicalModel:
         :param tune: Number of tuning iterations.
         :returns: Posterior inference data object.
         """
-
         # run mcmc sampler inside model context
         with self.model:
-
             trace = pm.sample(
                 draws=draws,
                 tune=tune,
@@ -223,11 +213,11 @@ class BHHierarchicalModel:
 
         return trace
 
-    def summary(self) -> pd.DataFrame| xr.Dataset:
+    def summary(self) -> pd.DataFrame | xr.Dataset:
         """
         Generate posterior summary statistics.
+
         :returns: summary table of posterior estimates.
         """
-
         # return arviz posterior summary
         return az.summary(self.trace)
